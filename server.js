@@ -211,41 +211,147 @@ app.post("/listings", async (req, res) => {
   const access_token = getAccessTokenOr401(res);
   if (!access_token) return;
 
-  // Validate body minimally. Etsy requires several fields; adapt as needed.
+  // Accept all Etsy listing properties from request body
   const {
-    title = "API Created Listing",
-    description = "Created via API",
-    price = "10.00",
-    quantity = 1,
-    who_made = "i_made_it",
-    when_made = "2020_2023",
-    taxonomy_id = 1,
+    title,
+    description,
+    price,
+    quantity,
+    who_made,
+    when_made,
+    taxonomy_id,
     shipping_profile_id,
+    return_policy_id,
+    materials,
+    shop_section_id,
+    processing_min,
+    processing_max,
+    readiness_state_id,
+    tags,
+    styles,
+    item_weight,
+    item_length,
+    item_width,
+    item_height,
+    item_weight_unit,
+    item_dimensions_unit,
+    is_personalizable,
+    personalization_is_required,
+    personalization_char_count_max,
+    personalization_instructions,
+    production_partner_ids,
+    image_ids,
+    is_supply,
+    is_customizable,
+    should_auto_renew,
+    is_taxable,
+    type,
+    legacy,
   } = req.body || {};
+
+  // Basic validation for required fields and enums
+  const errors = [];
+  if (!title) errors.push("title is required");
+  if (!description) errors.push("description is required");
+  if (!price || isNaN(price) || Number(price) <= 0)
+    errors.push("price must be a positive number");
+  if (!quantity || isNaN(quantity) || Number(quantity) <= 0)
+    errors.push("quantity must be a positive integer");
+  if (!who_made || !["i_did", "someone_else", "collective"].includes(who_made))
+    errors.push("who_made must be one of: i_did, someone_else, collective");
+  if (
+    !when_made ||
+    ![
+      "made_to_order",
+      "2020_2025",
+      "2010_2019",
+      "2006_2009",
+      "before_2006",
+      "2000_2005",
+      "1990s",
+      "1980s",
+      "1970s",
+      "1960s",
+      "1950s",
+      "1940s",
+      "1930s",
+      "1920s",
+      "1910s",
+      "1900s",
+      "1800s",
+      "1700s",
+      "before_1700",
+    ].includes(when_made)
+  )
+    errors.push("Invalid when_made value");
+  if (!taxonomy_id || isNaN(taxonomy_id) || Number(taxonomy_id) < 1)
+    errors.push("taxonomy_id must be a positive integer");
+  if (type && !["physical", "download", "both"].includes(type))
+    errors.push("type must be one of: physical, download, both");
+  if (item_weight_unit && !["oz", "lb", "g", "kg"].includes(item_weight_unit))
+    errors.push("item_weight_unit must be one of: oz, lb, g, kg");
+  if (
+    item_dimensions_unit &&
+    !["in", "ft", "mm", "cm", "m", "yd", "inches"].includes(
+      item_dimensions_unit
+    )
+  )
+    errors.push(
+      "item_dimensions_unit must be one of: in, ft, mm, cm, m, yd, inches"
+    );
+  if (errors.length) return res.status(400).json({ errors });
 
   try {
     const endpoint = `https://api.etsy.com/v3/application/shops/${SHOP_ID}/listings`;
-    const r = await axios.post(
-      endpoint,
-      {
-        title,
-        description,
-        price,
-        quantity,
-        who_made,
-        when_made,
-        taxonomy_id,
-        shipping_profile_id,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-          "x-api-key": CLIENT_ID,
-          "Content-Type": "application/json",
-        },
-      }
+    // Build payload with all provided fields
+    const payload = {
+      title,
+      description,
+      price,
+      quantity,
+      who_made,
+      when_made,
+      taxonomy_id,
+      shipping_profile_id,
+      return_policy_id,
+      materials,
+      shop_section_id,
+      processing_min,
+      processing_max,
+      readiness_state_id,
+      tags,
+      styles,
+      item_weight,
+      item_length,
+      item_width,
+      item_height,
+      item_weight_unit,
+      item_dimensions_unit,
+      is_personalizable,
+      personalization_is_required,
+      personalization_char_count_max,
+      personalization_instructions,
+      production_partner_ids,
+      image_ids,
+      is_supply,
+      is_customizable,
+      should_auto_renew,
+      is_taxable,
+      type,
+      legacy,
+    };
+    // Remove undefined fields
+    Object.keys(payload).forEach(
+      (key) => payload[key] === undefined && delete payload[key]
     );
 
+    const r = await axios.post(endpoint, payload, {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        "x-api-key": CLIENT_ID,
+        "Content-Type": "application/json",
+      },
+    });
     // return the created listing (draft)
     return res.json({ ok: true, listing: r.data });
   } catch (err) {
