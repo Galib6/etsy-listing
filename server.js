@@ -301,15 +301,28 @@ app.post("/listings", async (req, res) => {
     type,
     legacy,
     image_files, // array of image file paths
+    sku,
+    inventory, // allow full inventory object from payload
   } = req.body || {};
 
   // Basic validation for required fields and enums
   const errors = [];
-  if (!title) errors.push("title is required");
-  if (!description) errors.push("description is required");
-  if (!price || isNaN(price) || Number(price) <= 0)
+  console.log(title, req.body);
+  function validPositiveNumber(val) {
+    return typeof val === "number" && val > 0;
+  }
+  if (!title || typeof title !== "string" || !title.trim())
+    errors.push("title is required");
+  if (!description || typeof description !== "string" || !description.trim())
+    errors.push("description is required");
+  if (price === undefined || isNaN(Number(price)) || Number(price) <= 0)
     errors.push("price must be a positive number");
-  if (!quantity || isNaN(quantity) || Number(quantity) <= 0)
+  if (
+    quantity === undefined ||
+    isNaN(Number(quantity)) ||
+    !Number.isInteger(Number(quantity)) ||
+    Number(quantity) <= 0
+  )
     errors.push("quantity must be a positive integer");
   if (!who_made || !["i_did", "someone_else", "collective"].includes(who_made))
     errors.push("who_made must be one of: i_did, someone_else, collective");
@@ -317,7 +330,7 @@ app.post("/listings", async (req, res) => {
     !when_made ||
     ![
       "made_to_order",
-      "2020_2025",
+      "2020_2024",
       "2010_2019",
       "2006_2009",
       "before_2006",
@@ -338,7 +351,7 @@ app.post("/listings", async (req, res) => {
     ].includes(when_made)
   )
     errors.push("Invalid when_made value");
-  if (!taxonomy_id || isNaN(taxonomy_id) || Number(taxonomy_id) < 1)
+  if (!taxonomy_id || isNaN(Number(taxonomy_id)) || Number(taxonomy_id) < 1)
     errors.push("taxonomy_id must be a positive integer");
   if (type && !["physical", "download", "both"].includes(type))
     errors.push("type must be one of: physical, download, both");
@@ -353,11 +366,23 @@ app.post("/listings", async (req, res) => {
     errors.push(
       "item_dimensions_unit must be one of: in, ft, mm, cm, m, yd, inches"
     );
+  // Validate item_weight, item_length, item_width, item_height only for physical listings
+  if (type === "physical") {
+    if (item_weight !== undefined && !validPositiveNumber(item_weight))
+      errors.push("item_weight must be a positive number if set");
+    if (item_length !== undefined && !validPositiveNumber(item_length))
+      errors.push("item_length must be a positive number if set");
+    if (item_width !== undefined && !validPositiveNumber(item_width))
+      errors.push("item_width must be a positive number if set");
+    if (item_height !== undefined && !validPositiveNumber(item_height))
+      errors.push("item_height must be a positive number if set");
+  }
   if (errors.length) return res.status(400).json({ errors });
 
   try {
     const endpoint = `https://api.etsy.com/v3/application/shops/${SHOP_ID}/listings`;
     // Build payload with all provided fields
+    // Only include physical item fields if type is physical
     const payload = {
       title,
       description,
@@ -375,12 +400,6 @@ app.post("/listings", async (req, res) => {
       readiness_state_id,
       tags,
       styles,
-      item_weight,
-      item_length,
-      item_width,
-      item_height,
-      item_weight_unit,
-      item_dimensions_unit,
       is_personalizable,
       personalization_is_required,
       personalization_char_count_max,
@@ -394,10 +413,42 @@ app.post("/listings", async (req, res) => {
       type,
       legacy,
     };
+    if (type === "physical") {
+      if (validPositiveNumber(item_weight)) payload.item_weight = item_weight;
+      if (validPositiveNumber(item_length)) payload.item_length = item_length;
+      if (validPositiveNumber(item_width)) payload.item_width = item_width;
+      if (validPositiveNumber(item_height)) payload.item_height = item_height;
+      if (item_weight_unit) payload.item_weight_unit = item_weight_unit;
+      if (item_dimensions_unit)
+        payload.item_dimensions_unit = item_dimensions_unit;
+    }
+    // Add inventory object for SKU support
+    if (inventory && typeof inventory === "object") {
+      payload.inventory = inventory;
+    } else if (sku) {
+      // If only sku is provided, build a minimal inventory object
+      payload.inventory = {
+        products: [
+          {
+            sku: sku,
+            property_values: [],
+            offerings: [
+              {
+                price: price,
+                quantity: quantity,
+                is_enabled: true,
+              },
+            ],
+          },
+        ],
+      };
+    }
     // Remove undefined fields
     Object.keys(payload).forEach(
       (key) => payload[key] === undefined && delete payload[key]
     );
+
+    console.log(payload);
 
     // Create the listing first
     const r = await axios.post(endpoint, payload, {
@@ -420,57 +471,113 @@ app.post("/listings", async (req, res) => {
       listing.listing_id &&
       SHOP_ID
     ) {
-      for (let i = 0; i < image_files.length; i++) {
-        const filePath = image_files[i];
-        let localPath = filePath;
-        let tempFile = null;
-        try {
-          if (isUrl(filePath)) {
-            // Download image from URL to temp file
-            const response = await axios.get(filePath, {
-              responseType: "arraybuffer",
+      // Parallel upload using Promise.all
+      const uploadPromises = image_files.map((filePath, i) =>
+        (async () => {
+          let localPath = filePath;
+          let tempFile = null;
+          try {
+            if (isUrl(filePath)) {
+              // Download image from URL to temp file
+              const response = await axios.get(filePath, {
+                responseType: "arraybuffer",
+              });
+              const ext = path.extname(filePath) || ".jpg";
+              tempFile = path.join(
+                tmpDir,
+                `${crypto.randomBytes(8).toString("hex")}${ext}`
+              );
+              fs.writeFileSync(tempFile, response.data);
+              localPath = tempFile;
+            }
+            const form = new FormData();
+            form.append("image", fs.createReadStream(localPath));
+            form.append("rank", String(i + 1));
+            const imgEndpoint = `https://openapi.etsy.com/v3/application/shops/${SHOP_ID}/listings/${listing.listing_id}/images`;
+            const imgResp = await axios.post(imgEndpoint, form, {
+              headers: {
+                Authorization: `Bearer ${access_token}`,
+                "x-api-key": CLIENT_ID,
+                ...form.getHeaders(),
+              },
             });
-            const ext = path.extname(filePath) || ".jpg";
-            tempFile = path.join(
-              tmpDir,
-              `${crypto.randomBytes(8).toString("hex")}${ext}`
+            if (imgResp.data && imgResp.data.listing_image_id) {
+              return String(imgResp.data.listing_image_id);
+            }
+          } catch (imgErr) {
+            console.error(
+              `Image upload failed for ${filePath}:`,
+              imgErr.response?.data || imgErr.message
             );
-            fs.writeFileSync(tempFile, response.data);
-            localPath = tempFile;
+          } finally {
+            // Clean up temp file if created
+            if (tempFile && fs.existsSync(tempFile)) {
+              fs.unlinkSync(tempFile);
+            }
           }
-          const form = new FormData();
-          form.append("image", fs.createReadStream(localPath));
-          // Optional: rank, alt_text, etc.
-          form.append("rank", String(i + 1));
-          // You can add more fields if needed, e.g., overwrite, is_watermarked, alt_text
-          const imgEndpoint = `https://openapi.etsy.com/v3/application/shops/${SHOP_ID}/listings/${listing.listing_id}/images`;
-          const imgResp = await axios.post(imgEndpoint, form, {
+          return null;
+        })()
+      );
+      const results = await Promise.all(uploadPromises);
+      uploadedImageIds = results.filter(Boolean);
+    }
+
+    // After draft listing is created, update inventory with SKU if provided
+    let inventoryUpdateResult = null;
+    if (listing.listing_id && (sku || inventory)) {
+      try {
+        // Build inventory payload as in PUT /listings/:listing_id/inventory
+        let productsArr = [];
+        if (inventory && Array.isArray(inventory.products)) {
+          productsArr = inventory.products;
+        } else if (sku) {
+          productsArr = [
+            {
+              sku: sku,
+              property_values: [],
+              offerings: [
+                {
+                  price: price,
+                  quantity: quantity,
+                  is_enabled: true,
+                },
+              ],
+            },
+          ];
+        }
+        const inventoryPayload = {
+          products: productsArr,
+        };
+        const endpointInventory = `https://openapi.etsy.com/v3/application/listings/${listing.listing_id}/inventory`;
+        const rInventory = await axios.put(
+          endpointInventory,
+          inventoryPayload,
+          {
             headers: {
               Authorization: `Bearer ${access_token}`,
               "x-api-key": CLIENT_ID,
-              ...form.getHeaders(),
+              "Content-Type": "application/json",
             },
-          });
-          if (imgResp.data && imgResp.data.listing_image_id) {
-            uploadedImageIds.push(String(imgResp.data.listing_image_id));
           }
-        } catch (imgErr) {
-          console.error(
-            `Image upload failed for ${filePath}:`,
-            imgErr.response?.data || imgErr.message
-          );
-        } finally {
-          // Clean up temp file if created
-          if (tempFile && fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-          }
-        }
+        );
+        inventoryUpdateResult = rInventory.data;
+      } catch (err) {
+        console.error(
+          "Inventory update after draft failed:",
+          err.response?.data || err.message
+        );
       }
     }
 
-    // return the created listing and image IDs
-    return res.json({ ok: true, listing, listing_images_id: uploadedImageIds });
+    // return the created listing, image IDs, and inventory update result
+    return res.json({
+      ok: true,
+      listing,
+      listing_images_id: uploadedImageIds,
+      inventory: inventoryUpdateResult,
+    });
   } catch (err) {
+    console.log(err);
     console.error("Create listing error:", err.response?.data || err.message);
     const status = err.response?.status || 500;
     return res
