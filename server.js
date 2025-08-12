@@ -206,9 +206,62 @@ function getAccessTokenOr401(res) {
   return access_token;
 }
 
+// Helper: refresh access token if expired
+async function getValidAccessToken(res) {
+  let access_token = getAccessTokenOr401(res);
+  if (!access_token) return null;
+  // Test token validity with a lightweight Etsy API call
+  try {
+    await axios.get("https://openapi.etsy.com/v3/application/users/me", {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        "x-api-key": CLIENT_ID,
+        "Content-Type": "application/json",
+      },
+    });
+    return access_token;
+  } catch (err) {
+    if (
+      err.response?.data?.error === "invalid_token" ||
+      err.response?.data?.error_description?.includes("expired")
+    ) {
+      // Try to refresh token
+      try {
+        const store = readTokens();
+        const refresh_token = store?.etsy?.refresh_token;
+        if (!refresh_token) return null;
+        const r = await axios.post(
+          "https://openapi.etsy.com/v3/public/oauth/token",
+          qs.stringify({
+            grant_type: "refresh_token",
+            client_id: CLIENT_ID,
+            client_secret: CLIENT_SECRET,
+            refresh_token,
+          }),
+          { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+        );
+        const tokens = r.data;
+        store.etsy = tokens;
+        saveTokens(store);
+        return tokens.access_token;
+      } catch (refreshErr) {
+        console.error(
+          "Token refresh failed:",
+          refreshErr.response?.data || refreshErr.message
+        );
+        res.status(401).send("Token refresh failed. Re-authenticate.");
+        return null;
+      }
+    } else {
+      throw err;
+    }
+  }
+}
+
 // 4) Create a draft listing
 app.post("/listings", async (req, res) => {
-  const access_token = getAccessTokenOr401(res);
+  // Use new helper to get valid access token
+  const access_token = await getValidAccessToken(res);
   if (!access_token) return;
 
   // Accept all Etsy listing properties from request body
@@ -247,6 +300,7 @@ app.post("/listings", async (req, res) => {
     is_taxable,
     type,
     legacy,
+    image_files, // array of image file paths
   } = req.body || {};
 
   // Basic validation for required fields and enums
@@ -345,6 +399,7 @@ app.post("/listings", async (req, res) => {
       (key) => payload[key] === undefined && delete payload[key]
     );
 
+    // Create the listing first
     const r = await axios.post(endpoint, payload, {
       headers: {
         Authorization: `Bearer ${access_token}`,
@@ -352,8 +407,69 @@ app.post("/listings", async (req, res) => {
         "Content-Type": "application/json",
       },
     });
-    // return the created listing (draft)
-    return res.json({ ok: true, listing: r.data });
+    const listing = r.data;
+
+    // Upload images if image_files is provided and is an array
+    let uploadedImageIds = [];
+    const isUrl = (str) => /^https?:\/\//i.test(str);
+    const tmpDir = path.join(__dirname, "tmp_images");
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
+    if (
+      Array.isArray(image_files) &&
+      image_files.length > 0 &&
+      listing.listing_id &&
+      SHOP_ID
+    ) {
+      for (let i = 0; i < image_files.length; i++) {
+        const filePath = image_files[i];
+        let localPath = filePath;
+        let tempFile = null;
+        try {
+          if (isUrl(filePath)) {
+            // Download image from URL to temp file
+            const response = await axios.get(filePath, {
+              responseType: "arraybuffer",
+            });
+            const ext = path.extname(filePath) || ".jpg";
+            tempFile = path.join(
+              tmpDir,
+              `${crypto.randomBytes(8).toString("hex")}${ext}`
+            );
+            fs.writeFileSync(tempFile, response.data);
+            localPath = tempFile;
+          }
+          const form = new FormData();
+          form.append("image", fs.createReadStream(localPath));
+          // Optional: rank, alt_text, etc.
+          form.append("rank", String(i + 1));
+          // You can add more fields if needed, e.g., overwrite, is_watermarked, alt_text
+          const imgEndpoint = `https://openapi.etsy.com/v3/application/shops/${SHOP_ID}/listings/${listing.listing_id}/images`;
+          const imgResp = await axios.post(imgEndpoint, form, {
+            headers: {
+              Authorization: `Bearer ${access_token}`,
+              "x-api-key": CLIENT_ID,
+              ...form.getHeaders(),
+            },
+          });
+          if (imgResp.data && imgResp.data.listing_image_id) {
+            uploadedImageIds.push(String(imgResp.data.listing_image_id));
+          }
+        } catch (imgErr) {
+          console.error(
+            `Image upload failed for ${filePath}:`,
+            imgErr.response?.data || imgErr.message
+          );
+        } finally {
+          // Clean up temp file if created
+          if (tempFile && fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+          }
+        }
+      }
+    }
+
+    // return the created listing and image IDs
+    return res.json({ ok: true, listing, listing_images_id: uploadedImageIds });
   } catch (err) {
     console.error("Create listing error:", err.response?.data || err.message);
     const status = err.response?.status || 500;
