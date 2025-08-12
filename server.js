@@ -7,7 +7,6 @@ const bodyParser = require("body-parser");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const multer = require("multer");
 const FormData = require("form-data");
 
 const {
