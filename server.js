@@ -578,6 +578,12 @@ app.post("/listings", async (req, res) => {
     });
   } catch (err) {
     console.log(err);
+    console.log("Full API error object:", err);
+    if (err.response) {
+      console.log("API error response data:", err.response.data);
+      console.log("API error response status:", err.response.status);
+      console.log("API error response headers:", err.response.headers);
+    }
     console.error("Create listing error:", err.response?.data || err.message);
     const status = err.response?.status || 500;
     return res
