@@ -471,11 +471,15 @@ app.post("/listings", async (req, res) => {
       listing.listing_id &&
       SHOP_ID
     ) {
-      // Parallel upload using Promise.all
-      const uploadPromises = image_files.map((filePath, i) =>
-        (async () => {
-          let localPath = filePath;
-          let tempFile = null;
+      // Wait 2 seconds before starting image upload to avoid Etsy concurrency error
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Retry logic for image upload
+      async function uploadImageWithRetry(filePath, i, maxRetries = 3) {
+        let attempt = 0;
+        let localPath = filePath;
+        let tempFile = null;
+        while (attempt < maxRetries) {
           try {
             if (isUrl(filePath)) {
               // Download image from URL to temp file
@@ -502,24 +506,48 @@ app.post("/listings", async (req, res) => {
               },
             });
             if (imgResp.data && imgResp.data.listing_image_id) {
+              // Clean up temp file if created
+              if (tempFile && fs.existsSync(tempFile)) {
+                fs.unlinkSync(tempFile);
+              }
               return String(imgResp.data.listing_image_id);
             }
           } catch (imgErr) {
+            // Check for Etsy concurrency error
+            const errorMsg = imgErr.response?.data?.error || imgErr.message;
+            if (
+              errorMsg &&
+              errorMsg.includes("is being edited by another process") &&
+              attempt < maxRetries - 1
+            ) {
+              // Wait 2 seconds and retry
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              attempt++;
+              continue;
+            }
             console.error(
-              `Image upload failed for ${filePath}:`,
+              `Image upload failed for ${filePath} (attempt ${attempt + 1}):`,
               imgErr.response?.data || imgErr.message
             );
+            break;
           } finally {
             // Clean up temp file if created
             if (tempFile && fs.existsSync(tempFile)) {
               fs.unlinkSync(tempFile);
             }
           }
-          return null;
-        })()
-      );
-      const results = await Promise.all(uploadPromises);
-      uploadedImageIds = results.filter(Boolean);
+          break;
+        }
+        return null;
+      }
+
+      // Sequential upload (one by one)
+      uploadedImageIds = [];
+      for (let i = 0; i < image_files.length; i++) {
+        const filePath = image_files[i];
+        const imageId = await uploadImageWithRetry(filePath, i);
+        if (imageId) uploadedImageIds.push(imageId);
+      }
     }
 
     // After draft listing is created, update inventory with SKU if provided
