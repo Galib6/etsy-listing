@@ -552,6 +552,7 @@ app.post("/listings", async (req, res) => {
 
     // After draft listing is created, update inventory with SKU if provided
     let inventoryUpdateResult = null;
+    let videoUploadResult = null;
     if (listing.listing_id && (sku || inventory)) {
       try {
         // Build inventory payload as in PUT /listings/:listing_id/inventory
@@ -561,7 +562,7 @@ app.post("/listings", async (req, res) => {
         } else if (sku) {
           productsArr = [
             {
-              sku: sku,
+              sku: Number(sku),
               property_values: [],
               offerings: [
                 {
@@ -589,6 +590,31 @@ app.post("/listings", async (req, res) => {
           }
         );
         inventoryUpdateResult = rInventory.data;
+
+        // Upload video.mp4 after successful inventory update
+        const videoPath = path.join(__dirname, "video.mp4");
+        if (fs.existsSync(videoPath)) {
+          try {
+            const form = new FormData();
+            form.append("video", fs.createReadStream(videoPath));
+            form.append("name", "video.mp4");
+            const videoEndpoint = `https://openapi.etsy.com/v3/application/shops/${SHOP_ID}/listings/${listing.listing_id}/videos`;
+            const videoResp = await axios.post(videoEndpoint, form, {
+              headers: {
+                Authorization: `Bearer ${access_token}`,
+                "x-api-key": CLIENT_ID,
+                ...form.getHeaders(),
+              },
+            });
+            videoUploadResult = videoResp.data;
+          } catch (err) {
+            console.error(
+              "Video upload error:",
+              err.response?.data || err.message
+            );
+            videoUploadResult = { error: err.response?.data || err.message };
+          }
+        }
       } catch (err) {
         console.error(
           "Inventory update after draft failed:",
@@ -603,6 +629,7 @@ app.post("/listings", async (req, res) => {
       listing,
       listing_images_id: uploadedImageIds,
       inventory: inventoryUpdateResult,
+      video: videoUploadResult,
     });
   } catch (err) {
     console.log(err);
