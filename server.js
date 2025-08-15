@@ -678,6 +678,31 @@ app.get("/me", async (req, res) => {
   }
 });
 
+// health
+// Proxy Etsy API: Get authenticated user info
+app.get("/return-policies", async (req, res) => {
+  const access_token = getAccessTokenOr401(res);
+  if (!access_token) return;
+
+  try {
+    const endpoint = `https://openapi.etsy.com/v3/application/shops/${SHOP_ID}/policies/return`;
+    const r = await axios.get(endpoint, {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        "x-api-key": CLIENT_ID,
+        "Content-Type": "application/json",
+      },
+    });
+    return res.json(r.data);
+  } catch (err) {
+    console.error("Get user info error:", err.response?.data || err.message);
+    const status = err.response?.status || 500;
+    return res
+      .status(status)
+      .json({ error: err.response?.data || err.message });
+  }
+});
+
 // 8) Get listings by shop (proxy Etsy getListingsByShop API)
 app.get("/shops/listings", async (req, res) => {
   const access_token = getAccessTokenOr401(res);
