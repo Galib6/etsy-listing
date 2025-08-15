@@ -307,7 +307,6 @@ app.post("/listings", async (req, res) => {
 
   // Basic validation for required fields and enums
   const errors = [];
-  console.log(title, req.body);
   function validPositiveNumber(val) {
     return typeof val === "number" && val > 0;
   }
