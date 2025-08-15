@@ -329,7 +329,7 @@ app.post("/listings", async (req, res) => {
     !when_made ||
     ![
       "made_to_order",
-      "2020_2024",
+      "2020_2025",
       "2010_2019",
       "2006_2009",
       "before_2006",
