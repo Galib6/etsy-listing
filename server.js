@@ -379,6 +379,7 @@ app.post("/listings", async (req, res) => {
     if (item_height !== undefined && !validPositiveNumber(item_height))
       errors.push("item_height must be a positive number if set");
   }
+  console.log("error=>>>", errors);
   if (errors.length) return res.status(400).json({ errors });
 
   try {
@@ -449,8 +450,6 @@ app.post("/listings", async (req, res) => {
     Object.keys(payload).forEach(
       (key) => payload[key] === undefined && delete payload[key]
     );
-
-    console.log(payload);
 
     // Create the listing first
     const r = await axios.post(endpoint, payload, {
