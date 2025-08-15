@@ -656,7 +656,7 @@ app.get("/tokens", (req, res) => {
 // health
 // Proxy Etsy API: Get authenticated user info
 app.get("/me", async (req, res) => {
-  const access_token = getAccessTokenOr401(res);
+  const access_token = getValidAccessToken(res);
   if (!access_token) return;
 
   try {
@@ -681,7 +681,7 @@ app.get("/me", async (req, res) => {
 // health
 // Proxy Etsy API: Get authenticated user info
 app.get("/return-policies", async (req, res) => {
-  const access_token = getAccessTokenOr401(res);
+  const access_token = getValidAccessToken(res);
   if (!access_token) return;
 
   try {
