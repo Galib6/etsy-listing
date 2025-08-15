@@ -351,6 +351,8 @@ app.post("/listings", async (req, res) => {
     ].includes(when_made)
   )
     errors.push("Invalid when_made value");
+
+  if (!sku) errors.push("Sku required");
   if (!taxonomy_id || isNaN(Number(taxonomy_id)) || Number(taxonomy_id) < 1)
     errors.push("taxonomy_id must be a positive integer");
   if (type && !["physical", "download", "both"].includes(type))
