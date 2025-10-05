@@ -574,13 +574,27 @@ app.post("/listings", async (req, res) => {
                   price: price,
                   quantity: quantity,
                   is_enabled: true,
+                  readiness_state: readiness_state_id, // Default to 1 if not specified
                 },
               ],
             },
           ];
         }
+
+        // Ensure all offerings have readiness_state
+        productsArr = productsArr.map((product) => {
+          if (product.offerings) {
+            product.offerings = product.offerings.map((offering) => ({
+              ...offering,
+              readiness_state: readiness_state_id,
+            }));
+          }
+          return product;
+        });
+
         const inventoryPayload = {
           products: productsArr,
+          readiness_state_on_property: [], // Add empty array if no property-based readiness states
         };
         const endpointInventory = `https://openapi.etsy.com/v3/application/listings/${listing.listing_id}/inventory`;
         const rInventory = await axios.put(
@@ -832,6 +846,95 @@ app.get("/shops/readiness-state-definitions", async (req, res) => {
   } catch (err) {
     console.error(
       "Get readiness state definitions error:",
+      err.response?.data || err.message
+    );
+    const status = err.response?.status || 500;
+    return res
+      .status(status)
+      .json({ error: err.response?.data || err.message });
+  }
+});
+
+// Update listing inventory with proper readiness state handling
+app.put("/listings/:listing_id/inventory", async (req, res) => {
+  const access_token = getAccessTokenOr401(res);
+  if (!access_token) return;
+
+  const { listing_id } = req.params;
+  const {
+    products = [],
+    price_on_property = [],
+    quantity_on_property = [],
+    sku_on_property = [],
+    readiness_state_on_property = [],
+    default_readiness_state = 1, // Default readiness state ID
+  } = req.body;
+
+  try {
+    // Ensure all products have proper readiness states
+    const processedProducts = products.map((product) => {
+      if (product.offerings) {
+        product.offerings = product.offerings.map((offering) => ({
+          ...offering,
+          readiness_state: offering.readiness_state || default_readiness_state,
+        }));
+      }
+      return product;
+    });
+
+    const inventoryPayload = {
+      products: processedProducts,
+      price_on_property,
+      quantity_on_property,
+      sku_on_property,
+      readiness_state_on_property,
+    };
+
+    const endpoint = `https://openapi.etsy.com/v3/application/listings/${listing_id}/inventory`;
+    const response = await axios.put(endpoint, inventoryPayload, {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        "x-api-key": CLIENT_ID,
+        "Content-Type": "application/json",
+      },
+    });
+
+    return res.json({
+      ok: true,
+      inventory: response.data,
+    });
+  } catch (err) {
+    console.error(
+      "Update listing inventory error:",
+      err.response?.data || err.message
+    );
+    const status = err.response?.status || 500;
+    return res
+      .status(status)
+      .json({ error: err.response?.data || err.message });
+  }
+});
+
+// Get listing properties - useful for understanding property IDs
+app.get("/shops/:shop_id/listings/:listing_id/properties", async (req, res) => {
+  const access_token = getAccessTokenOr401(res);
+  if (!access_token) return;
+
+  const { shop_id, listing_id } = req.params;
+
+  try {
+    const endpoint = `https://openapi.etsy.com/v3/application/shops/${shop_id}/listings/${listing_id}/properties`;
+    const response = await axios.get(endpoint, {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        "x-api-key": CLIENT_ID,
+      },
+    });
+
+    return res.json(response.data);
+  } catch (err) {
+    console.error(
+      "Get listing properties error:",
       err.response?.data || err.message
     );
     const status = err.response?.status || 500;
