@@ -416,10 +416,14 @@ app.post("/listings", async (req, res) => {
       legacy,
     };
     if (type === "physical") {
-      if (validPositiveNumber(item_weight)) payload.item_weight = item_weight;
-      if (validPositiveNumber(item_length)) payload.item_length = item_length;
-      if (validPositiveNumber(item_width)) payload.item_width = item_width;
-      if (validPositiveNumber(item_height)) payload.item_height = item_height;
+      if (validPositiveNumber(item_weight))
+        payload.item_weight = item_weight.toFixed(2);
+      if (validPositiveNumber(item_length))
+        payload.item_length = item_length.toFixed(2);
+      if (validPositiveNumber(item_width))
+        payload.item_width = item_width.toFixed(2);
+      if (validPositiveNumber(item_height))
+        payload.item_height = item_height.toFixed(2);
       if (item_weight_unit) payload.item_weight_unit = item_weight_unit;
       if (item_dimensions_unit)
         payload.item_dimensions_unit = item_dimensions_unit;
@@ -449,6 +453,7 @@ app.post("/listings", async (req, res) => {
     Object.keys(payload).forEach(
       (key) => payload[key] === undefined && delete payload[key]
     );
+    console.log(payload);
 
     // Create the listing first
     const r = await axios.post(endpoint, payload, {
@@ -762,7 +767,7 @@ app.get("/shops/listings", async (req, res) => {
 });
 
 // Etsy Seller Taxonomy Nodes proxy route
-app.get("/etsy/seller-taxonomy/nodes", async (req, res) => {
+app.get("/taxonomi", async (req, res) => {
   try {
     const apiKey = CLIENT_ID; // Use your Etsy API key from .env
     const response = await axios.get(
@@ -800,6 +805,33 @@ app.get("/shops/shipping-profiles", async (req, res) => {
   } catch (err) {
     console.error(
       "Get shipping profiles error:",
+      err.response?.data || err.message
+    );
+    const status = err.response?.status || 500;
+    return res
+      .status(status)
+      .json({ error: err.response?.data || err.message });
+  }
+});
+
+// Get all readiness state definitions for a shop
+app.get("/shops/readiness-state-definitions", async (req, res) => {
+  const access_token = getAccessTokenOr401(res);
+  if (!access_token) return;
+
+  try {
+    const endpoint = `https://openapi.etsy.com/v3/application/shops/${SHOP_ID}/readiness-state-definitions`;
+    const r = await axios.get(endpoint, {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        "x-api-key": CLIENT_ID,
+        "Content-Type": "application/json",
+      },
+    });
+    return res.json(r.data);
+  } catch (err) {
+    console.error(
+      "Get readiness state definitions error:",
       err.response?.data || err.message
     );
     const status = err.response?.status || 500;
