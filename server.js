@@ -453,7 +453,6 @@ app.post("/listings", async (req, res) => {
     Object.keys(payload).forEach(
       (key) => payload[key] === undefined && delete payload[key]
     );
-    console.log(payload);
 
     // Create the listing first
     const r = await axios.post(endpoint, payload, {
@@ -574,7 +573,7 @@ app.post("/listings", async (req, res) => {
                   price: price,
                   quantity: quantity,
                   is_enabled: true,
-                  readiness_state: readiness_state_id, // Default to 1 if not specified
+                  readiness_state_id: readiness_state_id, // Default to 1 if not specified
                 },
               ],
             },
@@ -586,7 +585,7 @@ app.post("/listings", async (req, res) => {
           if (product.offerings) {
             product.offerings = product.offerings.map((offering) => ({
               ...offering,
-              readiness_state: readiness_state_id,
+              readiness_state_id: readiness_state_id,
             }));
           }
           return product;
